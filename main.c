@@ -1,55 +1,33 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <dirent.h>
 
 #include "parser.h"
 #include "datacenter.h"
+#include "filesystem.h"
 #include "constants.h"
 
-int main(int argc, char **argv){
-	DataCenter dc;
-	datacenter_init(&dc);
-
-	if (argc != 5) {
-    fprintf(stderr, "Usage: %s <servers> <ram> <disk> <cpus>\n", argv[0]);
-    return 1;
-  }
-
-	size_t servers;
-	size_t ram;
-	size_t disk;
-	double cpu;
-
-	if (parse_size_t_arg(argv[1], &servers) != 0 ||
-			parse_size_t_arg(argv[2], &ram) != 0 ||
-			parse_size_t_arg(argv[3], &disk) != 0 ||
-			parse_double_arg(argv[4], &cpu) != 0) {
-		fprintf(stderr, "Invalid command line arguments.\n");
-		return 1;
-	}
-
-	Resources resources = {
-    .ram = ram,
-    .disk = disk,
-    .cpu = cpu
-	};
-
-	if(datacenter_configure(&dc, servers, &resources) != 0){
-		fprintf(stderr, "Failed to configure Data Center.\n");
-		return 1;
-	}
-
+/**
+ * Reads and executes every command available in a file descriptor until the
+ * end of the commands is reached.
+ *
+ * @param dc Pointer to the Data Center.
+ * @param fd File descriptor to read commands from.
+ */
+static void process_commands(DataCenter *dc, int fd){
 	while(1){
-		switch (get_next_command(STDIN_FILENO)){
+		switch (get_next_command(fd)){
 			case CMD_DEFINE: {
 				VMType vmtype;
 
-				if (parse_define(STDIN_FILENO, &vmtype) != 0) {
+				if (parse_define(fd, &vmtype) != 0) {
 					fprintf(stderr, "Invalid define command. See H (help) for usage.\n");
 					continue;
 				}
 
-				if(datacenter_define_VM(&dc, &vmtype) != 0){
+				if(datacenter_define_VM(dc, &vmtype) != 0){
 					fprintf(stderr, "Failed to define VM.\n");
 					continue;
 				}
@@ -62,14 +40,14 @@ int main(int argc, char **argv){
 			case CMD_RESERVE: {
 				Reservation reservation = {0};
 
-				size_t num_items = parse_reserve(STDIN_FILENO, &reservation, MAX_RESERVATIONS_ITEMS);
+				size_t num_items = parse_reserve(fd, &reservation, MAX_RESERVATIONS_ITEMS);
 
 				if (num_items == 0) {
 					fprintf(stderr, "Invalid reserve command. See H (help) for usage.\n");
 					continue;
 				}
 
-				if (datacenter_reserve(&dc, &reservation) != 0) {
+				if (datacenter_reserve(dc, &reservation) != 0) {
 					fprintf(stderr, "Failed to reserve VMs.\n");
 					continue;
 				}
@@ -79,15 +57,15 @@ int main(int argc, char **argv){
 				break;
 			}
 
-			case CMD_EXECUTE:
+			case CMD_EXECUTE: {
 				char id[MAX_STRING_SIZE];
 
-				if(parse_execute(STDIN_FILENO, id) != 0){
+				if(parse_execute(fd, id) != 0){
 					fprintf(stderr, "Invalid execute command. See H (help) for usage.\n");
 					continue;
 				}
 
-				if (datacenter_execute(&dc, id) != 0) {
+				if (datacenter_execute(dc, id) != 0) {
 					fprintf(stderr, "Failed to execute reservation.\n");
 					continue;
 				}
@@ -95,25 +73,27 @@ int main(int argc, char **argv){
 				printf("Finished reservation execution!\n");
 
 				break;
+			}
 
 			case CMD_LIST:
-				if (datacenter_list(&dc) != 0) {
+				if (datacenter_list(dc) != 0) {
 					fprintf(stderr, "Failed to list VMs.\n");
 					continue;
 				}
 
 				break;
 
-			case CMD_WAIT:
+			case CMD_WAIT: {
 				unsigned int delay;
 
-				if(parse_wait(STDIN_FILENO, &delay) != 0){
+				if(parse_wait(fd, &delay) != 0){
 					fprintf(stderr, "Invalid wait command. See H (help) for usage.\n");
 					continue;
 				}
 
 				datacenter_wait(delay);
 				break;
+			}
 
 			case CMD_INVALID:
 				fprintf(stderr, "Invalid Command. See H (help) for usage.\n");
@@ -136,8 +116,96 @@ int main(int argc, char **argv){
 				break;
 
 			case EOC:
-				datacenter_destroy(&dc);
-				return 0;
+				return;
 		}
 	}
+}
+
+/**
+ * Processes, in alphabetical order, every ".conf" file inside a directory.
+ *
+ * @param dc Pointer to the Data Center.
+ * @param input_dir Directory containing the ".conf" files.
+ *
+ * @return 0 on success.
+ * @return 1 if the directory could not be read.
+ */
+static int process_input_dir(DataCenter *dc, const char *input_dir){
+	struct dirent **entries;
+	int num_entries = list_conf_files(input_dir, &entries);
+
+	if (num_entries < 0) {
+		fprintf(stderr, "Failed to read input directory %s.\n", input_dir);
+		return 1;
+	}
+
+	for (int i = 0; i < num_entries; i++) {
+		char path[MAX_PATH_SIZE];
+		int len = snprintf(path, sizeof(path), "%s/%s", input_dir, entries[i]->d_name);
+
+		free(entries[i]);
+
+		if (len < 0 || (size_t)len >= sizeof(path) || !file_exists(path)) {
+			fprintf(stderr, "Skipping invalid input file %s.\n", path);
+			continue;
+		}
+
+		int fd = open(path, O_RDONLY);
+
+		if (fd < 0) {
+			fprintf(stderr, "Failed to open input file %s.\n", path);
+			continue;
+		}
+
+		process_commands(dc, fd);
+
+		close(fd);
+	}
+
+	free(entries);
+	return 0;
+}
+
+int main(int argc, char **argv){
+	DataCenter dc;
+	datacenter_init(&dc);
+
+	if (argc != 6) {
+    fprintf(stderr, "Usage: %s <servers> <ram> <disk> <cpus> <input_dir>\n", argv[0]);
+    return 1;
+  }
+
+	size_t servers;
+	size_t ram;
+	size_t disk;
+	double cpu;
+
+	if (parse_size_t_arg(argv[1], &servers) != 0 ||
+			parse_size_t_arg(argv[2], &ram) != 0 ||
+			parse_size_t_arg(argv[3], &disk) != 0 ||
+			parse_double_arg(argv[4], &cpu) != 0) {
+		fprintf(stderr, "Invalid command line arguments.\n");
+		return 1;
+	}
+
+	if (!path_exists(argv[5])) {
+		fprintf(stderr, "Invalid input directory.\n");
+		return 1;
+	}
+
+	Resources resources = {
+    .ram = ram,
+    .disk = disk,
+    .cpu = cpu
+	};
+
+	if(datacenter_configure(&dc, servers, &resources) != 0){
+		fprintf(stderr, "Failed to configure Data Center.\n");
+		return 1;
+	}
+
+	int status = process_input_dir(&dc, argv[5]);
+
+	datacenter_destroy(&dc);
+	return status;
 }

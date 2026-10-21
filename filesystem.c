@@ -10,6 +10,25 @@
 #include <stdio.h>
 #include <unistd.h>
 
+#define CONF_EXTENSION ".conf"
+
+/**
+ * Filter used by scandir(): accepts entries whose name ends with ".conf".
+ *
+ * @param entry Directory entry being checked.
+ *
+ * @return 1 if the entry should be kept, 0 otherwise.
+ */
+static int is_conf_file(const struct dirent *entry){
+  size_t name_len = strlen(entry->d_name);
+  size_t ext_len = strlen(CONF_EXTENSION);
+
+  if (name_len <= ext_len)
+    return 0;
+
+  return strcmp(entry->d_name + name_len - ext_len, CONF_EXTENSION) == 0;
+}
+
 int path_exists(const char *path){
   struct stat st;
 
@@ -43,4 +62,8 @@ int absolute_path(const char *path, char *buffer, size_t size){
 
   free(resolved);
   return 0;
+}
+
+int list_conf_files(const char *dir_path, struct dirent ***entries){
+  return scandir(dir_path, entries, is_conf_file, alphasort);
 }
