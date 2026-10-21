@@ -1,3 +1,15 @@
+/**
+Changes since defualt:
+
+1. added 
+  int list_conf_files(const char *dir_path, struct dirent ***entries){
+    return scandir(dir_path, entries, is_conf_file, alphasort);
+}
+  scandir is POSIX function that opens the directory on the pc and reads the entrys 1 by 1 (using opendir/readdir),
+  then filters with is_conf_file(entry) 
+
+*/
+
 #define _XOPEN_SOURCE 700
 
 #include "filesystem.h"
