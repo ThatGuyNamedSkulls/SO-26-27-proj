@@ -9,44 +9,43 @@
 #include "filesystem.h"
 
 /*
- * Resumo da sincronização (os trincos são sempre adquiridos por esta ordem,
- * o que impede a interblocagem):
+ * Resumo da sincronizaçao (os locks sao sempre adquiridos por esta ordem):
  *
- *   1. reservations_lock  - tabela de reservas, estado das reservas, pid/estado
+ *   1. reservations_lock  - tabela de reservas, estado das reservas, parent id/estado
  *                           das VMs e running_vms.
- *   2. servers[i].lock    - recursos e lista de VMs do servidor i. Quando são
- *                           precisos vários, fecham-se por id crescente.
+ *   2. servers[i].lock    - recursos e lista de VMs do servidor i. Quando sao
+ *                           precisos varos, fecham-se por id crescente.
  *   3. types_lock         - trinco de leitura-escrita da tabela de tipos de VM.
- *   4. output_lock        - stdout, para as mensagens e as listagens não se misturarem.
+ *   4. output_lock        - stdout, para as mensagens e as listagens nao se misturarem.
  */
 
 typedef struct VMType{
-  char id[MAX_STRING_SIZE];        // Id do tipo de VM. ex: "V1"
-  char input_folder[MAX_PATH_SIZE];  // Diretoria com os inputs do executável (caminho absoluto)
-  char exec_path[MAX_PATH_SIZE];     // Caminho do executável (caminho absoluto)
+  char id[MAX_STRING_SIZE];          // Id do tipo de VM
+  char input_folder[MAX_PATH_SIZE];  // Diretoria com os inputs do executavel (caminho absoluto)
+  char exec_path[MAX_PATH_SIZE];     // Caminho do executavel (caminho absoluto)
   Resources required;
 } VMType;
 
 typedef enum {
-  VM_STATE_RESERVED,   // colocada num servidor, processo ainda não lançado (à espera do comando 'A')
-  VM_STATE_RUNNING     // processo lançado (fork()/exec() feitos), o `pid` é válido
+  VM_STATE_RESERVED,   // colocada num servidor, processo ainda nao lançado (a espera do comando 'A')
+  VM_STATE_RUNNING     // processo lançado (fork()/exec() feitos), o `pid` e valido
 } VMState;
 
 typedef struct Server Server;
 
 typedef struct VM {
-  char id[MAX_VM_ID_STRING]; // Id da VM. ex: "R1_V1_1"
-  VMType *type;   // Tipo da VM.
-  Server *server; // Servidor onde a VM está.
-  pid_t pid;      // PID do processo da VM.
-  VMState state;  // Estado da VM.
-  char dir[MAX_PATH_SIZE]; // Pasta da VM. ex: "/tmp/CloudIST-1117611/R1/R1_1"
+  char id[MAX_VM_ID_STRING]; // Id da VM
+  VMType *type;              // Tipo da VM
+  Server *server;            // Servidor onde a VM esta
+  pid_t pid;                 // PID do processo da VM
+  VMState state;             // Estado da VM
+  char dir[MAX_PATH_SIZE];   // Pasta da VM
 } VM;
 
 typedef struct Server {
-	size_t id;		     // Id do servidor (1, 2, 3, ...)
+	size_t id;		       // Id do servidor (1, 2, 3, ...)
 	Resources total;     // Recursos que o servidor tem.
-	Resources available; // Recursos ainda disponíveis.
+	Resources available; // Recursos ainda disponiveis.
 
 	VM *hosted_vms[MAX_HOSTED_VMS];
     size_t num_hosted_vms;
@@ -55,9 +54,9 @@ typedef struct Server {
 } Server;
 
 typedef enum {
-    RES_STATE_CREATING,  // o 'R' ainda a está a alocar (invisível para 'A' e 'L')
-    RES_STATE_PENDING,   // Reservada com 'R', à espera de 'A'
-    RES_STATE_RUNNING    // Já foi feito 'A', as suas VMs estão a correr
+    RES_STATE_CREATING,  // o 'R' ainda a esta a alocar (invisivel para 'A' e 'L')
+    RES_STATE_PENDING,   // Reservada com 'R', a espera de 'A'
+    RES_STATE_RUNNING    // Ja foi feito 'A', as suas VMs estao a correr
 } ReservationState;
 
 typedef struct ReservationPair {
@@ -65,7 +64,7 @@ typedef struct ReservationPair {
     size_t amount;                    // Quantidade de VMs deste tipo a reservar.
     size_t server_id;                 // Servidor onde cada VM vai correr.
 
-    VMType *vm_type;                   // Usado para não voltar a procurar o tipo.
+    VMType *vm_type;                   // Usado para nao voltar a procurar o tipo.
 } ReservationItem;
 
 typedef struct Reservation {
@@ -75,13 +74,13 @@ typedef struct Reservation {
     size_t items_count;
 
 	VM *vms[MAX_RESERVATION_VMS];                   // Lista das VMs desta reserva.
-	size_t num_vms;                                 // Número de VMs desta reserva.
+	size_t num_vms;                                 // Numero de VMs desta reserva.
 	ReservationState state;                         // Estado da reserva.
 } Reservation;
 
 typedef struct DataCenter {
 	Server *servers;			     // Lista de servidores.
-	size_t num_servers;              // Número de servidores.
+	size_t num_servers;              // Numero de servidores.
 	double host_cores;               // Cores reais usados para simular todo o centro de dados.
 
 	VMType vm_types[MAX_VM_TYPES];
@@ -90,7 +89,7 @@ typedef struct DataCenter {
 
 	Reservation *reservations[MAX_RESERVATIONS];
     size_t num_reservations;
-	size_t running_vms;              // Número de processos de VMs ainda não recolhidos com wait.
+	size_t running_vms;              // Numero de processos de VMs ainda nao recolhidos com wait.
 	int shutting_down;               // Fica a 1 quando a tarefa reaper tem de parar.
 	pthread_mutex_t reservations_lock;
 	pthread_cond_t vms_changed;      // Assinalada quando running_vms muda ou ao terminar.
@@ -98,7 +97,7 @@ typedef struct DataCenter {
 	pthread_t reaper;                // Tarefa que espera pelos processos das VMs.
 	pthread_mutex_t output_lock;     // Protege o stdout.
 
-	int configured;		      // Se o centro de dados já foi configurado ou não.
+	int configured;		      // Se o centro de dados ja foi configurado ou nao.
 } DataCenter;
 
 /**
@@ -109,8 +108,8 @@ typedef struct DataCenter {
 void datacenter_init(DataCenter *dc);
 
 /**
- * Destrói um centro de dados. Espera que todas as VMs terminem, pára a
- * tarefa reaper e liberta toda a memória.
+ * Destroi um centro de dados. Espera que todas as VMs terminem, para a
+ * tarefa reaper e liberta toda a memoria.
  *
  * @param dc Centro de dados a destruir.
  */
@@ -120,9 +119,9 @@ void datacenter_destroy(DataCenter *dc);
  * Configura um centro de dados e arranca a tarefa reaper.
  *
  * @param dc Ponteiro para o centro de dados a configurar.
- * @param num_servers Número de servidores.
+ * @param num_servers Numero de servidores.
  * @param resources Ponteiro para os recursos de cada servidor.
- * @param host_cores Cores reais disponíveis para simular o centro de dados.
+ * @param host_cores Cores reais disponiveis para simular o centro de dados.
  *
  * @return 0 em caso de sucesso.
  * @return 1 em caso de erro.
@@ -144,7 +143,7 @@ int datacenter_define_VM(DataCenter *dc, struct VMType *type);
  * Reserva um conjunto de VMs. Ou se reservam todas as VMs ou nenhuma.
  *
  * @param dc Ponteiro para o centro de dados.
- * @param reservation Ponteiro para a reserva (é copiada).
+ * @param reservation Ponteiro para a reserva (e copiada).
  *
  * @return 0 em caso de sucesso.
  * @return 1 em caso de erro.
@@ -163,7 +162,7 @@ int datacenter_list(DataCenter *dc);
 
 /**
  * Executa uma reserva, lançando um processo por VM. Retorna logo depois de
- * lançar os processos; a tarefa reaper destrói cada VM quando o seu processo
+ * lançar os processos; a tarefa reaper destroi cada VM quando o seu processo
  * termina.
  *
  * @param dc Ponteiro para o centro de dados.
@@ -186,7 +185,7 @@ void datacenter_wait(unsigned int delay_ms);
  * tarefas.
  *
  * @param dc Ponteiro para o centro de dados.
- * @param message Mensagem a imprimir (é acrescentada uma mudança de linha).
+ * @param message Mensagem a imprimir (e acrescentada uma mudança de linha).
  */
 void datacenter_print(DataCenter *dc, const char *message);
 

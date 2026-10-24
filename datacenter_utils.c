@@ -1,23 +1,23 @@
 /**
-Alterações ao código base:
+Alteraçoes ao codigo base:
 
 1. reservas (R):
   reservation_check_items - verifica a quantidade, o id do servidor e o tipo de VM de cada item (types_lock para leitura)
-  reservation_register - põe a reserva na tabela como CREATING, assim nenhuma outra tarefa pode usar o mesmo id
-  reservation_allocate - fecha só os trincos dos servidores que usa, por id crescente (sem interblocagem, como nos filósofos),
-  simula em cópias e só cria as VMs se couberem todas (tudo ou nada)
+  reservation_register - poe a reserva na tabela como CREATING, assim nenhuma outra tarefa pode usar o mesmo id(erro burro cometido antes)
+  reservation_allocate - fecha so os locks dos servidores que usa, por id crescente,
+  simula em copias e so cria as VMs se couberem todas (tudo ou nada, como no teste publico dado)
   reservation_remove - tira-a da tabela e liberta-a
 
-2. execução (A):
-  prepare_vm_dirs - cria /tmp/CloudIST-<nº aluno>/<res>/<vm> e copia para lá a diretoria de inputs (copy_dir)
+2. execuçao (A):
+  prepare_vm_dirs - cria /tmp/CloudIST-<nº aluno>/<res>/<vm> e copia para la a diretoria de inputs (copy_dir)
   spawn_all_vms - um fork por VM, o filho faz chdir para a sua pasta, setrlimit (RAM e disco) e
-  execvp do cpulimit -q -f -l <limite> -- <exec> (procura o cpulimit no PATH), o pai guarda o pid e marca-a RUNNING
-  vm_cpu_limit - vCPU / (CPU por servidor x servidores) x cores do host x 100
+  execvp do cpulimit -q -f -l <limite> -- <exec> (procura o cpulimit no PATH), o pai guarda o PID e marca-a RUNNING
+  vm_cpu_limit - vCPU / (CPU por servidor x servidores) x cores do host x 100 (formula dada)
 
 3. fim das VMs:
   reaper_thread - espera com wait() por qualquer processo de VM, depois o vm_destroy devolve os recursos,
-  retira a VM e, quando a reserva fica sem VMs, retira também a reserva
-  dorme na variável de condição vms_changed enquanto não há VMs a correr
+  retira a VM e, quando a reserva fica sem VMs, retira tambem a reserva (good closing)
+  dorme na variavel de condiçao vms_changed enquanto nao ha VMs a correr
 */
 
 #include "datacenter_utils.h"
@@ -75,7 +75,7 @@ int reservation_check_items(DataCenter *dc, Reservation *reservation) {
 		}
 		vms_count += item->amount;
 
-		// Guarda o vm_type no item para usar depois (os tipos nunca são apagados).
+		// Guarda o vm_type no item para usar depois (os tipos nunca sao apagados).
 		item->vm_type = VMType_exists(dc, item->vm_type_id);
 
 		if (item->vm_type == NULL) {
@@ -112,7 +112,7 @@ int reservation_register(DataCenter *dc, Reservation *reservation) {
 void reservation_remove(DataCenter *dc, Reservation *reservation) {
 	for (size_t i = 0; i < dc->num_reservations; i++) {
 		if (dc->reservations[i] == reservation) {
-			// Desloca as reservas seguintes uma posição para a esquerda.
+			// Desloca as reservas seguintes uma posiçao para a esquerda.
 			memmove(&dc->reservations[i],
 							&dc->reservations[i + 1],
 							(dc->num_reservations - i - 1) * sizeof(Reservation *));
@@ -125,11 +125,11 @@ void reservation_remove(DataCenter *dc, Reservation *reservation) {
 }
 
 /**
- * Junta os ids dos servidores usados por uma reserva, sem repetições e
- * ordenados por id crescente (a ordem pela qual os trincos são fechados).
+ * Junta os ids dos servidores usados por uma reserva, sem repetiçoes e
+ * ordenados por id crescente (a ordem pela qual os locks sao fechados).
  *
  * @param reservation Reserva a alocar.
- * @param ids Array onde são guardados os ids (MAX_RESERVATIONS_ITEMS posições).
+ * @param ids Array onde sao guardados os ids (MAX_RESERVATIONS_ITEMS posiçoes).
  *
  * @return Número de servidores diferentes.
  */
@@ -144,7 +144,7 @@ static size_t reservation_servers(Reservation *reservation, size_t *ids) {
 			pos++;
 
 		if (pos < count && ids[pos] == id)
-			continue; // Já está na lista.
+			continue; // Ja esta na lista.
 
 		memmove(&ids[pos + 1], &ids[pos], (count - pos) * sizeof(size_t));
 		ids[pos] = id;
@@ -155,14 +155,14 @@ static size_t reservation_servers(Reservation *reservation, size_t *ids) {
 }
 
 /**
- * Encontra a posição de um id de servidor no array criado por
+ * Encontra a posiçao de um id de servidor no array criado por
  * reservation_servers.
  *
  * @param ids Array de ids de servidores.
  * @param count Número de ids.
  * @param id Id do servidor a procurar.
  *
- * @return Posição do id.
+ * @return Posiçao do id.
  */
 static size_t server_index(const size_t *ids, size_t count, size_t id) {
 	size_t i = 0;
@@ -174,8 +174,8 @@ static size_t server_index(const size_t *ids, size_t count, size_t id) {
 }
 
 /**
- * Desfaz as VMs criadas até agora pelo reservation_allocate.
- * Quem chama tem de ter os trincos dos servidores usados pela reserva.
+ * Desfaz as VMs criadas ate agora pelo reservation_allocate.
+ * Quem chama tem de ter os locks dos servidores usados pela reserva.
  *
  * @param reservation Ponteiro para a reserva a desfazer.
  */
@@ -188,7 +188,7 @@ static void reservation_rollback(Reservation *reservation){
 		// Devolve os recursos
 		resources_add(&server->available, vm->type->required);
 
-		// Retira a VM da lista do servidor (é sempre a última)
+		// Retira a VM da lista do servidor (e sempre a última)
 		server->num_hosted_vms--;
 
 		server->hosted_vms[server->num_hosted_vms] = NULL;
@@ -210,7 +210,7 @@ int reservation_allocate(DataCenter *dc, Reservation *reservation) {
 	size_t hosted_count[MAX_RESERVATIONS_ITEMS];
 	int status = 0;
 
-	// Fecha só os trincos dos servidores usados, sempre por id crescente (sem interblocagem).
+	// Fecha so os locks dos servidores usados, sempre por id crescente (sem interblocagem).
 	for (size_t i = 0; i < num_ids; i++) {
 		Server *server = &dc->servers[ids[i] - 1];
 
@@ -219,7 +219,7 @@ int reservation_allocate(DataCenter *dc, Reservation *reservation) {
 		hosted_count[i] = server->num_hosted_vms;
 	}
 
-	// 1. Simula a colocação de todas as VMs nas cópias.
+	// 1. Simula a colocaçao de todas as VMs nas copias.
 	for (size_t i = 0; i < reservation->items_count && status == 0; i++) {
 		ReservationItem *item = &reservation->items[i];
 		size_t s = server_index(ids, num_ids, item->server_id);
@@ -244,7 +244,7 @@ int reservation_allocate(DataCenter *dc, Reservation *reservation) {
 		}
 	}
 
-	// 2. Cabe tudo: cria as VMs e desconta os recursos a sério.
+	// 2. Cabe tudo: cria as VMs e desconta os recursos a serio.
 	for (size_t i = 0; i < reservation->items_count && status == 0; i++) {
 		ReservationItem *item = &reservation->items[i];
 		Server *server = &dc->servers[item->server_id - 1];
@@ -327,50 +327,50 @@ static int vm_cpu_limit(DataCenter *dc, VM *vm) {
 
 /**
  * Imprime uma mensagem de erro e termina o processo filho. Usa write() e
- * _exit() porque o filho é uma cópia de um processo com várias tarefas.
+ * _exit() porque o filho e uma copia de um processo com varias tarefas.
  *
  * @param message Mensagem a imprimir.
  */
 static void child_fail(const char *message) {
-	ssize_t ignored = write(STDERR_FILENO, message, strlen(message));
+	ssize_t ignored = write(2, message, strlen(message)); // fd 2 = stderr
 	(void)ignored;
 	_exit(127);
 }
 
 /**
  * Corre no processo filho depois do fork(): entra na pasta da VM, limita a
- * RAM e o disco com setrlimit e faz exec da aplicação da VM através do
+ * RAM e o disco com setrlimit e faz exec da aplicaçao da VM atraves do
  * cpulimit. Nunca retorna.
  *
  * @param vm Ponteiro para a VM a lançar.
  * @param cpu_limit Percentagem do cpulimit, em string.
  */
 static void spawn_vm_child(VM *vm, char *cpu_limit) {
-	// A aplicação usa caminhos relativos para os seus inputs.
+	// A aplicaçao usa caminhos relativos para os seus inputs.
 	if (chdir(vm->dir) != 0)
 		child_fail("Failed to enter the VM folder.\n");
 
 	struct rlimit lim;
 
-	// RAM (GB -> bytes), não alterável pelo processo.
+	// RAM (GB -> bytes), nao alteravel pelo processo.
 	lim.rlim_cur = (rlim_t)vm->type->required.ram << 30;
 	lim.rlim_max = lim.rlim_cur;
 	if (setrlimit(RLIMIT_AS, &lim) != 0)
 		child_fail("Failed to limit the VM RAM.\n");
 
-	// Disco: tamanho máximo de cada ficheiro (GB -> bytes).
+	// Disco: tamanho maximo de cada ficheiro (GB -> bytes).
 	lim.rlim_cur = (rlim_t)vm->type->required.disk << 30;
 	lim.rlim_max = lim.rlim_cur;
 	if (setrlimit(RLIMIT_FSIZE, &lim) != 0)
 		child_fail("Failed to limit the VM disk.\n");
 
-	// Por convenção o argv[0] é o nome do programa.
+	// Por convençao o argv[0] e o nome do programa.
 	char *args[] = {CPULIMIT_NAME, "-q", "-f", "-l", cpu_limit, "--", vm->type->exec_path, NULL};
 
 	// O execvp procura o cpulimit no PATH, como o terminal faz (pode estar em /usr/bin ou em ~/bin).
 	execvp(CPULIMIT_NAME, args);
 
-	// O exec só retorna em caso de erro.
+	// O exec so retorna em caso de erro.
 	child_fail("Failed to exec cpulimit.\n");
 }
 
@@ -400,7 +400,7 @@ int spawn_all_vms(DataCenter *dc, Reservation *res) {
 	}
 
 	if (failed) {
-		// Destrói as VMs que não arrancaram (do fim para o início, porque o
+		// Destroi as VMs que nao arrancaram (do fim para o inicio, porque o
 		// vm_destroy desloca o array).
 		for (size_t i = res->num_vms; i-- > 0;) {
 			if (res->vms[i]->state == VM_STATE_RESERVED && vm_destroy(dc, res, res->vms[i]))
@@ -446,7 +446,7 @@ int vm_destroy(DataCenter *dc, Reservation *res, VM *vm) {
 
 	free(vm);
 
-	// Todas as VMs da reserva terminaram: a reserva é apagada.
+	// Todas as VMs da reserva terminaram: a reserva e apagada.
 	if (res->num_vms == 0) {
 		reservation_remove(dc, res);
 		return 1;
@@ -461,10 +461,10 @@ int vm_destroy(DataCenter *dc, Reservation *res, VM *vm) {
  *
  * @param dc Ponteiro para o centro de dados.
  * @param pid Pid devolvido pelo wait().
- * @param res_out Onde é guardada a reserva da VM.
- * @param vm_out Onde é guardada a VM.
+ * @param res_out Onde e guardada a reserva da VM.
+ * @param vm_out Onde e guardada a VM.
  *
- * @return 1 se encontrar, 0 caso contrário.
+ * @return 1 se encontrar, 0 caso contrario.
  */
 static int find_vm_by_pid(DataCenter *dc, pid_t pid, Reservation **res_out, VM **vm_out) {
 	for (size_t i = 0; i < dc->num_reservations; i++) {
@@ -488,7 +488,7 @@ void *reaper_thread(void *arg) {
 	while (1) {
 		pthread_mutex_lock(&dc->reservations_lock);
 
-		// Dorme enquanto não há nada para esperar.
+		// Dorme enquanto nao ha nada para esperar.
 		while (dc->running_vms == 0 && !dc->shutting_down)
 			pthread_cond_wait(&dc->vms_changed, &dc->reservations_lock);
 
@@ -499,14 +499,14 @@ void *reaper_thread(void *arg) {
 
 		pthread_mutex_unlock(&dc->reservations_lock);
 
-		// Bloqueia (sem ter nenhum trinco) até algum processo de VM terminar.
+		// Bloqueia (sem ter nenhum trinco) ate algum processo de VM terminar.
 		int status;
 		pid_t pid = wait(&status);
 
 		pthread_mutex_lock(&dc->reservations_lock);
 
 		if (pid < 0) {
-			// Já não há filhos para esperar: na prática nada está a correr.
+			// Ja nao ha filhos para esperar: na pratica nada esta a correr.
 			fprintf(stderr, "Failed to wait for VMs.\n");
 			dc->running_vms = 0;
 			pthread_cond_broadcast(&dc->vms_changed);

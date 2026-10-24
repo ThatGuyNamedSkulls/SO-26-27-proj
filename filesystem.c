@@ -1,16 +1,17 @@
 /**
-Alterações ao código base:
+Alteraçoes ao codigo base:
 
 1. adicionei isto:
-  int list_conf_files(const char *dir_path, char ***names)
-  abre a diretoria com opendir e lê as entradas uma a uma com readdir (errno = 0 antes, para distinguir erro de fim)
-  só fica com as que fazem is_conf_file(name) devolver 1, copia cada nome com malloc + strcpy
+  int list_conf_files(const char *dir_path, char ***names), *** pq e um pointer  para array (**) mas queremosdar return
+  dele na variavel names por isso mais um *
+  abre a diretoria com opendir e le as entradas uma a uma com readdir (errno = 0 antes, para distinguir erro de fim)
+  so fica com as que fazem is_conf_file(name) devolver 1, copia cada nome com malloc + strcpy
   ordena-os com qsort + strcmp (compare_names)
-  devolve o número de nomes (ou -1 se der erro) e escreve o array em *names
+  devolve o numero de nomes (ou -1 se der erro) e escreve o array em *names
   free_file_list(names, count) liberta tudo no fim
 
 2. adicionei:
-  make_dirs(path) - como o "mkdir -p", chama mkdir para cada nível do caminho, EEXIST não é erro
+  make_dirs(path) - como o "mkdir -p", chama mkdir para cada nivel do caminho, se a pasta ja existir (path_exists) nao é erro
   copy_file(src, dst, mode) - copia com open/read/write, o write pode escrever menos por isso repete
   copy_dir(src, dst) - recursivo, o stat diz se é uma pasta (mkdir + copy_dir) ou um ficheiro (copy_file)
 */
@@ -32,23 +33,27 @@ Alterações ao código base:
 
 #define CONF_EXTENSION ".conf"
 #define COPY_BUFFER_SIZE 4096
-#define DIR_PERMISSIONS 0755
+// Permissoes como nos slides (SF2): rwx para o dono, r-x para o grupo e para os restantes.
+#define DIR_PERMISSIONS (S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH)
+// Os 9 bits de permissoes (rwx do dono, grupo e restantes), sem o tipo do ficheiro.
+#define PERMISSIONS_MASK (S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IWGRP | S_IXGRP | \
+                          S_IROTH | S_IWOTH | S_IXOTH)
 
 /**
  * Verifica se um nome de ficheiro termina em ".conf".
  *
  * @param name Nome do ficheiro a verificar.
  *
- * @return 1 se o nome terminar em ".conf", 0 caso contrário.
+ * @return 1 se o nome terminar em ".conf", 0 caso contrario.
  */
 static int is_conf_file(const char *name){
   size_t name_len = strlen(name);
   size_t ext_len = strlen(CONF_EXTENSION);
 
   if (name_len <= ext_len)
-    return 0; /** ".conf" sozinho ou nomes curtos são rejeitados */
+    return 0; /** ".conf" sozinho ou nomes curtos sao rejeitados */
 
-  return strcmp(name + name_len - ext_len, CONF_EXTENSION) == 0; /** aponta para os últimos 5 caracteres do nome e vê se são ".conf" */
+  return strcmp(name + name_len - ext_len, CONF_EXTENSION) == 0; /** aponta para os ultimos 5 caracteres do nome e ve se sao ".conf" */
 }
 
 /**
@@ -121,7 +126,7 @@ int list_conf_files(const char *dir_path, char ***names){
   struct dirent *entry;
 
   while (1) {
-    errno = 0; // Para distinguir um erro do fim da diretoria.
+    errno = 0; // Para distinguir o tipo de error
     entry = readdir(dir);
 
     if (entry == NULL) {
@@ -133,7 +138,7 @@ int list_conf_files(const char *dir_path, char ***names){
     if (!is_conf_file(entry->d_name))
       continue;
 
-    // Aumenta o array quando está cheio.
+    // Aumenta o array quando esta cheio.
     if (count == capacity) {
       capacity = (capacity == 0) ? 8 : capacity * 2;
       char **bigger = realloc(list, capacity * sizeof(char *));
@@ -176,21 +181,21 @@ int make_dirs(const char *path){
 
   strcpy(buffer, path);
 
-  // Cria cada diretoria-mãe, cortando o caminho em cada '/'.
+  // Cria cada diretoria-mae, cortando o caminho em cada '/'.
   for (char *p = buffer + 1; *p != '\0'; p++) {
     if (*p != '/')
       continue;
 
     *p = '\0';
-    if (mkdir(buffer, DIR_PERMISSIONS) != 0 && errno != EEXIST)
+    if (mkdir(buffer, DIR_PERMISSIONS) != 0 && !path_exists(buffer))
       return 1;
     *p = '/';
   }
 
-  if (mkdir(buffer, DIR_PERMISSIONS) != 0 && errno != EEXIST)
+  if (mkdir(buffer, DIR_PERMISSIONS) != 0 && !path_exists(buffer))
     return 1;
 
-  return path_exists(buffer) ? 0 : 1;
+  return 0;
 }
 
 /**
@@ -202,7 +207,7 @@ int make_dirs(const char *path){
  * @param name Nome a acrescentar.
  *
  * @return 0 em caso de sucesso.
- * @return 1 se o resultado não couber no buffer.
+ * @return 1 se o resultado nao couber no buffer.
  */
 static int join_path(char *buffer, size_t size, const char *dir, const char *name){
   int len = snprintf(buffer, size, "%s/%s", dir, name);
@@ -211,17 +216,17 @@ static int join_path(char *buffer, size_t size, const char *dir, const char *nam
 }
 
 /**
- * Copia um ficheiro regular, criando o destino ou esvaziando-o se já existir.
+ * Copia um ficheiro regular, criando o destino ou esvaziando-o se ja existir.
  *
  * @param src Caminho do ficheiro a copiar.
  * @param dst Caminho do ficheiro novo.
- * @param mode Permissões do ficheiro novo.
+ * @param mode Permissoes do ficheiro novo.
  *
  * @return 0 em caso de sucesso.
  * @return 1 em caso de erro.
  */
 static int copy_file(const char *src, const char *dst, mode_t mode){
-  // O_CLOEXEC: uma VM criada entretanto por outra tarefa não herda estes ficheiros.
+  // O_CLOEXEC: uma VM criada entretanto por outra tarefa nao herda estes ficheiros.
   int in = open(src, O_RDONLY | O_CLOEXEC);
   if (in < 0)
     return 1;
@@ -269,7 +274,7 @@ int copy_dir(const char *src, const char *dst){
   int status = 0;
 
   while (status == 0 && (entry = readdir(dir)) != NULL) {
-    // Salta as entradas da própria diretoria e da diretoria-mãe.
+    // Salta as entradas da propria diretoria e da diretoria-mae.
     if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
       continue;
 
@@ -289,14 +294,13 @@ int copy_dir(const char *src, const char *dst){
     }
 
     if (S_ISDIR(st.st_mode)) {
-      if (mkdir(dst_path, st.st_mode & 0777) != 0 && errno != EEXIST)
+      if (mkdir(dst_path, st.st_mode & PERMISSIONS_MASK) != 0 && !path_exists(dst_path))
         status = 1;
       else
         status = copy_dir(src_path, dst_path);
     } else if (S_ISREG(st.st_mode)) {
-      status = copy_file(src_path, dst_path, st.st_mode & 0777);
+      status = copy_file(src_path, dst_path, st.st_mode & PERMISSIONS_MASK);
     }
-    // Outros tipos de entrada (sockets, dispositivos, ...) são ignorados.
   }
 
   closedir(dir);

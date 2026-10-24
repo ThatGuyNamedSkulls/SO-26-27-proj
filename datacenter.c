@@ -1,23 +1,23 @@
 /**
-Alterações ao código base:
+Alteraçoes ao codigo base:
 
 1. Ex3:
-  a ordem é sempre reservations_lock -> servers[i].lock (por id crescente) -> types_lock -> output_lock
-  assim nunca há um ciclo de tarefas à espera umas das outras (sem interblocagem)
-  init/destroy criam e destroem os mutexes, o rwlock e a variável de condição
+  a ordem e sempre "reservations_lock -> servers[i].lock (por id crescente) -> types_lock -> output_lock"
+  assim nunca ha um ciclo de tarefas a espera umas das outras (which is good)
+  init/destroy criam e destroem os mutexes, o rwlock e a variavel de condiçao
 
-2. D: os caminhos passam a absolutos (absolute_path) porque a VM corre dentro da sua pasta,
-  o types_lock é um rwlock: o D escreve, o R e o L só leem
+2. D: os caminhos passam a absolutos (absolute_path) porque a VM corre dentro da sua proprio pasta,
+  o types_lock e um rwlock: o D escreve, o R e o L so leem (as said on instrucoes)
 
 3. R: verifica os itens -> regista o id como CREATING -> aloca nos servidores -> PENDING
-  se a alocação falhar a reserva é retirada, não fica nada reservado
+  se a alocaçao falhar a reserva e retirada, nao fica nada reservado (fixed)
 
-4. A: marca-a RUNNING (para só um A a arrancar), copia os inputs sem ter trincos,
-  depois faz fork das VMs e retorna logo (o ciclo de comandos não fica bloqueado)
+4. A: marca-a RUNNING (para so um A a arrancar), copia os inputs sem ter locks,
+  depois faz fork das VMs e retorna (o ciclo de comandos nao fica bloqueado yay)
 
-5. o configure arranca a tarefa reaper, o destroy espera que todas as VMs terminem e depois pára-a
+5. o configure arranca a funcao reaper, o destroy espera que todas as VMs terminem e depois para-a
 
-6. L: tem os trincos enquanto imprime para mostrar um estado coerente, salta as reservas CREATING
+6. L: tem os locks enquanto imprime para mostrar o estado, salta as reservas CREATING
 */
 
 #include "datacenter.h"
@@ -78,7 +78,7 @@ void datacenter_destroy(DataCenter *dc) {
   for (size_t i = 0; i < dc->num_servers; i++)
     pthread_mutex_destroy(&dc->servers[i].lock);
 
-  free(dc->servers);
+  free(dc->servers); // dar free na memory very important
   dc->servers = NULL;
   dc->num_servers = 0;
 
@@ -94,7 +94,7 @@ int datacenter_configure(DataCenter *dc, size_t num_servers, Resources *resource
     return 1;
   }
 
-  // CPU e HOST_CORES são números de cores, por isso têm de ser inteiros.
+  // CPU e HOST_CORES sao numeros de cores, por isso tem de ser inteiros.
   if (num_servers == 0 || resources->ram == 0 || resources->disk == 0 ||
       resources->cpu <= 0.0 || !resources_cpu_is_integer(resources->cpu) ||
       host_cores <= 0.0 || !resources_cpu_is_integer(host_cores)) {
@@ -147,8 +147,8 @@ int datacenter_define_VM(DataCenter *dc, VMType *type){
     return 1;
   }
 
-  // As vCPUs são um número de CPUs virtuais (inteiro); assim as somas e
-  // subtrações de cpu nos servidores são sempre exatas.
+  // As vCPUs sao um numero de CPUs virtuais (inteiro); assim as somas e
+  // subtraçoes de cpu nos servidores sao sempre exatas.
   if (!resources_cpu_is_integer(type->required.cpu)) {
     fprintf(stderr, "Invalid number of vCPUs.\n");
     return 1;
@@ -201,7 +201,7 @@ int datacenter_reserve(DataCenter *dc, Reservation *reservation) {
   *res = *reservation;
   res->num_vms = 0;
 
-  // Fica com o id para que nenhuma outra tarefa o possa usar.
+  // Fica com o id para que nenhuma outra tarefa o possa usar (evita bugs).
   if (reservation_register(dc, res) != 0) {
     free(res);
     return 1;
@@ -249,7 +249,7 @@ int datacenter_execute(DataCenter *dc, const char *reservation_id) {
 
   pthread_mutex_unlock(&dc->reservations_lock);
 
-  // A copy pode demorar, por isso e feita sem ter nenhum trinco.
+  // A copy pode demorar, por isso e feita sem ter nenhum lock.
   if (prepare_vm_dirs(res) != 0) {
     pthread_mutex_lock(&dc->reservations_lock);
     res->state = RES_STATE_PENDING;
@@ -277,6 +277,8 @@ int datacenter_list(DataCenter *dc) {
   pthread_rwlock_rdlock(&dc->types_lock);
   pthread_mutex_lock(&dc->output_lock);
 
+  // e agora começa as formataçoes requeridas, claude foi usado aqui para garantir que tudo
+  // esta de acordo com o esperado
   printf("=================================== DATA CENTER STATUS ===================================\n");
   printf("\n[ PHYSICAL SERVERS ] (%zu total)\n", dc->num_servers);
   printf("------------------------------------------------------------------------------------------\n");
