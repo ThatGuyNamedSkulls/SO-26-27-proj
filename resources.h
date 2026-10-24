@@ -4,58 +4,49 @@
 #include <stddef.h>
 
 typedef struct {
-    size_t ram;  // RAM in GB
-    size_t disk; // Disk Space in GB
-    double cpu;  // Number of cores/Vcpu
+    size_t ram;  // RAM em GB
+    size_t disk; // Espaço em disco em GB
+    double cpu;  // Número de cores/vCPUs
 } Resources;
 
 /**
- * This function verifies if a double precision CPU value is sufficiently
- * close to an integer, accounting for floating-point precision errors.
+ * Verifica se um valor de CPU (double) está suficientemente perto de um
+ * inteiro, tendo em conta os erros de precisão dos números de vírgula
+ * flutuante.
  *
- * @param cpu CPU value to check.
+ * @param cpu Valor de CPU a verificar.
  *
- * @return 1 if the value is an integer (within the allowed precision),
- * @return 0 otherwise.
+ * @return 1 se o valor for inteiro (dentro da precisão permitida),
+ * @return 0 caso contrário.
  */
 int resources_cpu_is_integer(double cpu);
 
 /**
- * Checks whether a resource set can satisfy another.
+ * Verifica se um conjunto de recursos chega para satisfazer outro.
  *
- * @param available Available resources.
- * @param required Required resources.
+ * @param available Recursos disponíveis.
+ * @param required Recursos necessários.
  *
- * @return 1 if available resources are sufficient, 0 otherwise.
+ * @return 1 se os recursos disponíveis chegarem, 0 caso contrário.
  */
 int resources_can_fit(Resources available, Resources required);
 
 /**
- * Adds one resource set to another.
+ * Soma um conjunto de recursos a outro.
  *
- * @param dst Resource set to update.
- * @param src Resources to add.
+ * @param dst Conjunto de recursos a atualizar.
+ * @param src Recursos a somar.
  */
 void resources_add(Resources *dst, Resources src);
 
 /**
- * Subtracts one resource set from another.
+ * Subtrai um conjunto de recursos a outro.
  *
- * Assumes that dst contains at least the resources in src.
+ * Assume que dst tem pelo menos os recursos de src.
  *
- * @param dst Resource set to update.
- * @param src Resources to subtract.
+ * @param dst Conjunto de recursos a atualizar.
+ * @param src Recursos a subtrair.
  */
 void resources_sub(Resources *dst, Resources src);
-
-/**
- * Checks whether two resource sets are equal.
- *
- * @param a First resource set.
- * @param b Second resource set.
- *
- * @return 1 if equal, 0 otherwise.
- */
-int resources_equal(Resources a, Resources b);
 
 #endif

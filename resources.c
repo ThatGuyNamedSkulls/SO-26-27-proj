@@ -26,9 +26,3 @@ void resources_sub(Resources *dst, Resources src) {
   dst->disk -= src.disk;
   dst->cpu -= src.cpu;
 }
-
-int resources_equal(Resources a, Resources b) {
-    return a.ram == b.ram &&
-           a.disk == b.disk &&
-           fabs(a.cpu - b.cpu) < CPU_EPSILON;
-}

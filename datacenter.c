@@ -1,3 +1,26 @@
+/**
+Alterações ao código base:
+
+1. Ex3:
+  a ordem é sempre reservations_lock -> servers[i].lock (por id crescente) -> types_lock -> output_lock
+  assim nunca há um ciclo de tarefas à espera umas das outras (sem interblocagem)
+  init/destroy criam e destroem os mutexes, o rwlock e a variável de condição
+
+2. D: os caminhos passam a absolutos (absolute_path) porque a VM corre dentro da sua pasta,
+  o types_lock é um rwlock: o D escreve, o R e o L só leem
+
+3. R: verifica os itens -> regista o id como CREATING -> aloca nos servidores -> PENDING
+  se a alocação falhar a reserva é retirada, não fica nada reservado
+
+4. A: marca-a RUNNING (para só um A a arrancar), copia os inputs sem ter trincos,
+  depois faz fork das VMs e retorna logo (o ciclo de comandos não fica bloqueado)
+
+5. o configure procura o cpulimit (stat em /usr/bin, /usr/local/bin, /bin) e arranca a tarefa reaper,
+  o destroy espera que todas as VMs terminem e depois pára-a
+
+6. L: tem os trincos enquanto imprime para mostrar um estado coerente, salta as reservas CREATING
+*/
+
 #include "datacenter.h"
 #include "datacenter_utils.h"
 
@@ -6,33 +29,96 @@
 #include <stdlib.h>
 #include <string.h>
 
+/**
+ * Procura o cpulimit com stat (file_exists).
+ *
+ * @param path Buffer onde e guardado o caminho (fica "" se nao for encontrado).
+ * @param size Tamanho do buffer, em bytes.
+ */
+static void find_cpulimit(char *path, size_t size) {
+  const char *candidates[] = {"/usr/bin/cpulimit", "/usr/local/bin/cpulimit", "/bin/cpulimit"};
+
+  path[0] = '\0';
+
+  for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+    if (file_exists(candidates[i])) {
+      snprintf(path, size, "%s", candidates[i]);
+      return;
+    }
+  }
+}
+
 void datacenter_init(DataCenter *dc) {
   dc->servers = NULL;
   dc->num_servers = 0;
+  dc->host_cores = 1.0;
+  dc->cpulimit_path[0] = '\0';
 
   dc->num_vm_types = 0;
 
   dc->num_reservations = 0;
+  dc->running_vms = 0;
+  dc->shutting_down = 0;
+
+  pthread_rwlock_init(&dc->types_lock, NULL);
+  pthread_mutex_init(&dc->reservations_lock, NULL);
+  pthread_cond_init(&dc->vms_changed, NULL);
+  pthread_mutex_init(&dc->output_lock, NULL);
 
   dc->configured = 0;
 }
 
 void datacenter_destroy(DataCenter *dc) {
-  for (size_t i = 0; i < dc->num_servers; i++) {
-    for(size_t j = 0; j < dc->servers[i].num_hosted_vms; j++){
-      free(dc->servers[i].hosted_vms[j]);
-    }
+  if (dc->configured) {
+    pthread_mutex_lock(&dc->reservations_lock);
+
+    // Espera que todos os processos das VMs terminem.
+    while (dc->running_vms > 0)
+      pthread_cond_wait(&dc->vms_changed, &dc->reservations_lock);
+
+    // Avisa a tarefa reaper para parar.
+    dc->shutting_down = 1;
+    pthread_cond_broadcast(&dc->vms_changed);
+
+    pthread_mutex_unlock(&dc->reservations_lock);
+
+    pthread_join(dc->reaper, NULL);
   }
+
+  // As reservas que nunca foram executadas ainda sao donas das suas VMs.
+  for (size_t i = 0; i < dc->num_reservations; i++) {
+    Reservation *res = dc->reservations[i];
+
+    for (size_t j = 0; j < res->num_vms; j++)
+      free(res->vms[j]);
+
+    free(res);
+  }
+  dc->num_reservations = 0;
+
+  for (size_t i = 0; i < dc->num_servers; i++)
+    pthread_mutex_destroy(&dc->servers[i].lock);
+
   free(dc->servers);
+  dc->servers = NULL;
+  dc->num_servers = 0;
+
+  pthread_rwlock_destroy(&dc->types_lock);
+  pthread_mutex_destroy(&dc->reservations_lock);
+  pthread_cond_destroy(&dc->vms_changed);
+  pthread_mutex_destroy(&dc->output_lock);
 }
 
-int datacenter_configure(DataCenter *dc, size_t num_servers, Resources *resources){
+int datacenter_configure(DataCenter *dc, size_t num_servers, Resources *resources, double host_cores){
   if(dc->configured){
     fprintf(stderr, "Data Center is already configured!\n");
     return 1;
   }
 
-  if (num_servers == 0 || resources->ram == 0 || resources->disk == 0 || resources->cpu <= 0.0) {
+  // CPU e HOST_CORES são números de cores, por isso têm de ser inteiros.
+  if (num_servers == 0 || resources->ram == 0 || resources->disk == 0 ||
+      resources->cpu <= 0.0 || !resources_cpu_is_integer(resources->cpu) ||
+      host_cores <= 0.0 || !resources_cpu_is_integer(host_cores)) {
     fprintf(stderr, "Invalid configuration values.\n");
     return 1;
   }
@@ -49,9 +135,21 @@ int datacenter_configure(DataCenter *dc, size_t num_servers, Resources *resource
     dc->servers[i].total = *resources;
     dc->servers[i].available = *resources;
     dc->servers[i].num_hosted_vms = 0;
+    pthread_mutex_init(&dc->servers[i].lock, NULL);
   }
 
   dc->num_servers = num_servers;
+  dc->host_cores = host_cores;
+
+  // So e preciso no comando A, por isso nan encontrar o cpulimit, nao e erro aqui.
+  find_cpulimit(dc->cpulimit_path, sizeof(dc->cpulimit_path));
+
+  // Tarefa que espera pelos processos das VMs e as destroi quando terminam.
+  if (pthread_create(&dc->reaper, NULL, reaper_thread, dc) != 0) {
+    fprintf(stderr, "Failed to create the reaper thread.\n");
+    return 1;
+  }
+
   dc->configured = 1;
 
   return 0;
@@ -60,11 +158,6 @@ int datacenter_configure(DataCenter *dc, size_t num_servers, Resources *resource
 int datacenter_define_VM(DataCenter *dc, VMType *type){
   if (!dc->configured) {
     fprintf(stderr, "Data Center needs to be configured!\n");
-    return 1;
-  }
-
-  if(VMType_exists(dc, type->id) != NULL){
-    fprintf(stderr, "VM type with id %s already exists.\n", type->id);
     return 1;
   }
 
@@ -78,14 +171,39 @@ int datacenter_define_VM(DataCenter *dc, VMType *type){
     return 1;
   }
 
-  if(dc->num_vm_types >= MAX_VM_TYPES){
-    fprintf(stderr, "Maximum of VM types reached.\n");
+  // As vCPUs são um número de CPUs virtuais (inteiro); assim as somas e
+  // subtrações de cpu nos servidores são sempre exatas.
+  if (!resources_cpu_is_integer(type->required.cpu)) {
+    fprintf(stderr, "Invalid number of vCPUs.\n");
     return 1;
   }
-  
-  dc->vm_types[dc->num_vm_types++] = *type;
 
-  return 0;
+  // Caminhos absolutos, porque cada processo de VM corre dentro da sua pasta.
+  VMType new_type = *type;
+
+  if (absolute_path(type->exec_path, new_type.exec_path, MAX_PATH_SIZE) != 0 ||
+      absolute_path(type->input_folder, new_type.input_folder, MAX_PATH_SIZE) != 0) {
+    fprintf(stderr, "Invalid VM paths.\n");
+    return 1;
+  }
+
+  int status = 0;
+
+  pthread_rwlock_wrlock(&dc->types_lock);
+
+  if(VMType_exists(dc, new_type.id) != NULL){
+    fprintf(stderr, "VM type with id %s already exists.\n", new_type.id);
+    status = 1;
+  } else if(dc->num_vm_types >= MAX_VM_TYPES){
+    fprintf(stderr, "Maximum of VM types reached.\n");
+    status = 1;
+  } else {
+    dc->vm_types[dc->num_vm_types++] = new_type;
+  }
+
+  pthread_rwlock_unlock(&dc->types_lock);
+
+  return status;
 }
 
 int datacenter_reserve(DataCenter *dc, Reservation *reservation) {
@@ -94,20 +212,36 @@ int datacenter_reserve(DataCenter *dc, Reservation *reservation) {
     return 1;
   }
 
-  if(reservation_validate(dc, reservation) != 0){
+  if (reservation_check_items(dc, reservation) != 0)
+    return 1;
+
+  Reservation *res = malloc(sizeof(Reservation));
+
+  if (res == NULL) {
+    fprintf(stderr, "Failed to allocate reservation.\n");
     return 1;
   }
 
-  if (dc->num_reservations >= MAX_RESERVATIONS){
-    fprintf(stderr, "Max number of reservations reached\n");
+  *res = *reservation;
+  res->num_vms = 0;
+
+  // Fica com o id para que nenhuma outra tarefa o possa usar.
+  if (reservation_register(dc, res) != 0) {
+    free(res);
     return 1;
   }
 
-  if (reservation_commit(dc, reservation) != 0)
+  // Se alguma VM nao couber, a reservation desaparece.
+  if (reservation_allocate(dc, res) != 0) {
+    pthread_mutex_lock(&dc->reservations_lock);
+    reservation_remove(dc, res);
+    pthread_mutex_unlock(&dc->reservations_lock);
     return 1;
+  }
 
-  dc->reservations[dc->num_reservations] = *reservation;
-  dc->num_reservations++;
+  pthread_mutex_lock(&dc->reservations_lock);
+  res->state = RES_STATE_PENDING;
+  pthread_mutex_unlock(&dc->reservations_lock);
 
   return 0;
 }
@@ -118,20 +252,45 @@ int datacenter_execute(DataCenter *dc, const char *reservation_id) {
     return 1;
   }
 
-  Reservation *res = find_pending_reservation(dc, reservation_id);
-  if (!res) return 1;
+  if (dc->cpulimit_path[0] == '\0') {
+    fprintf(stderr, "Failed to find cpulimit.\n");
+    return 1;
+  }
 
-  if (spawn_all_vms(res) != 0) return 1;
+  pthread_mutex_lock(&dc->reservations_lock);
 
+  Reservation *res = find_reservation(dc, reservation_id);
+
+  if (res == NULL || res->state == RES_STATE_CREATING) {
+    pthread_mutex_unlock(&dc->reservations_lock);
+    fprintf(stderr, "Reservation ID %s not found.\n", reservation_id);
+    return 1;
+  }
+
+  if (res->state != RES_STATE_PENDING) {
+    pthread_mutex_unlock(&dc->reservations_lock);
+    fprintf(stderr, "Reservation ID %s is not in a pending state.\n", reservation_id);
+    return 1;
+  }
+
+  // A partir daqui nenhum outro 'A' pode arrancar esta reserva.
   res->state = RES_STATE_RUNNING;
 
-  wait_for_all_vms(res);
+  pthread_mutex_unlock(&dc->reservations_lock);
 
-  res->state = RES_STATE_FINISHED;
+  // A copy pode demorar, por isso e feita sem ter nenhum trinco.
+  if (prepare_vm_dirs(res) != 0) {
+    pthread_mutex_lock(&dc->reservations_lock);
+    res->state = RES_STATE_PENDING;
+    pthread_mutex_unlock(&dc->reservations_lock);
+    return 1;
+  }
 
-  reservation_destroy(dc, res);
+  pthread_mutex_lock(&dc->reservations_lock);
+  int status = spawn_all_vms(dc, res);
+  pthread_mutex_unlock(&dc->reservations_lock);
 
-  return 0;
+  return status;
 }
 
 int datacenter_list(DataCenter *dc) {
@@ -140,31 +299,38 @@ int datacenter_list(DataCenter *dc) {
     return 1;
   }
 
+  // A mesma ordem que em todo o lado: reservas -> servidores -> tipos -> output.
+  pthread_mutex_lock(&dc->reservations_lock);
+  for (size_t i = 0; i < dc->num_servers; i++)
+    pthread_mutex_lock(&dc->servers[i].lock);
+  pthread_rwlock_rdlock(&dc->types_lock);
+  pthread_mutex_lock(&dc->output_lock);
+
   printf("=================================== DATA CENTER STATUS ===================================\n");
   printf("\n[ PHYSICAL SERVERS ] (%zu total)\n", dc->num_servers);
   printf("------------------------------------------------------------------------------------------\n");
 
   for (size_t i = 0; i < dc->num_servers; i++) {
-    Server server = dc->servers[i];
+    Server *server = &dc->servers[i];
 
-    Resources used = server.total;
-    resources_sub(&used, server.available);
+    Resources used = server->total;
+    resources_sub(&used, server->available);
 
-    printf(" Server #%zu\n", server.id);
+    printf(" Server #%zu\n", server->id);
     printf("   ├─ Resources Total     : %6.2f vCPUs | %3zu GB RAM | %3zu GB Disk\n",
-            server.total.cpu, server.total.ram, server.total.disk);
+            server->total.cpu, server->total.ram, server->total.disk);
     printf("   ├─ Resources Used      : %6.2f vCPUs | %3zu GB RAM | %3zu GB Disk\n",
             used.cpu, used.ram, used.disk);
     printf("   ├─ Resources Available : %6.2f vCPUs | %3zu GB RAM | %3zu GB Disk\n",
-            server.available.cpu, server.available.ram, server.available.disk);
-    printf("   └─ Hosted VMs (%zu):\n", server.num_hosted_vms);
+            server->available.cpu, server->available.ram, server->available.disk);
+    printf("   └─ Hosted VMs (%zu):\n", server->num_hosted_vms);
 
-    if (server.num_hosted_vms == 0) {
+    if (server->num_hosted_vms == 0) {
       printf("        (None)\n");
     } else {
-      for (size_t j = 0; j < server.num_hosted_vms; j++) {
-        VM *vm = server.hosted_vms[j];
-        const char *prefix = (j == server.num_hosted_vms - 1) ? "└──" : "├──";
+      for (size_t j = 0; j < server->num_hosted_vms; j++) {
+        VM *vm = server->hosted_vms[j];
+        const char *prefix = (j == server->num_hosted_vms - 1) ? "└──" : "├──";
 
         printf("        %s VM ID : %-16s | Type: %-10s | State: %-10s",
                 prefix,
@@ -187,37 +353,48 @@ int datacenter_list(DataCenter *dc) {
     printf(" (None)\n\n");
   } else {
       for (size_t i = 0; i < dc->num_vm_types; i++) {
-        VMType vt = dc->vm_types[i];
+        VMType *vt = &dc->vm_types[i];
         printf("  * Type ID: %-12s | Requirements: %.2f vCPU, %zu GB RAM, %zu GB Disk\n",
-                vt.id, vt.required.cpu, vt.required.ram, vt.required.disk);
-        printf("    ├─ Executable : %s\n", vt.exec_path);
-        printf("    └─ Input Dir  : %s\n\n", vt.input_folder);
+                vt->id, vt->required.cpu, vt->required.ram, vt->required.disk);
+        printf("    ├─ Executable : %s\n", vt->exec_path);
+        printf("    └─ Input Dir  : %s\n\n", vt->input_folder);
       }
       printf("\n");
   }
 
-  printf("[ RESERVATIONS ] (%zu total)\n", dc->num_reservations);
+  // As reservas que o 'R' ainda esta a criar nao sa mostradas.
+  size_t visible = 0;
+  for (size_t i = 0; i < dc->num_reservations; i++) {
+    if (dc->reservations[i]->state != RES_STATE_CREATING)
+      visible++;
+  }
+
+  printf("[ RESERVATIONS ] (%zu total)\n", visible);
   printf("------------------------------------------------------------------------------------------\n");
-  if (dc->num_reservations == 0) {
+  if (visible == 0) {
     printf(" (None)\n\n");
   } else {
     for (size_t i = 0; i < dc->num_reservations; i++) {
-      Reservation res = dc->reservations[i];
+      Reservation *res = dc->reservations[i];
+
+      if (res->state == RES_STATE_CREATING)
+        continue;
+
       printf("  * Reservation ID: %-12s | State: %-8s | Total VMs: %zu\n",
-              res.id, res_state_to_string(res.state), res.num_vms);
+              res->id, res_state_to_string(res->state), res->num_vms);
 
       printf("    ├─ Requested Pairs:\n");
-      for (size_t k = 0; k < res.items_count; k++) {
-        printf("    │    • %-12s : %zu unit(s)\n", res.items[k].vm_type_id, res.items[k].amount);
+      for (size_t k = 0; k < res->items_count; k++) {
+        printf("    │    • %-12s : %zu unit(s)\n", res->items[k].vm_type_id, res->items[k].amount);
       }
 
       printf("    └─ Allocated VMs:\n");
-      if (res.num_vms == 0) {
+      if (res->num_vms == 0) {
         printf("         (None)\n");
       } else {
-          for (size_t k = 0; k < res.num_vms; k++) {
-            VM *vm = res.vms[k];
-            const char *prefix = (k == res.num_vms - 1) ? "└──" : "├──";
+          for (size_t k = 0; k < res->num_vms; k++) {
+            VM *vm = res->vms[k];
+            const char *prefix = (k == res->num_vms - 1) ? "└──" : "├──";
             printf("         %s ID: %-15s | Host Server: #%zu\n",
                     prefix,
                     vm->id,
@@ -229,10 +406,23 @@ int datacenter_list(DataCenter *dc) {
   }
 
   printf("================================================================--------------------------\n\n");
+
+  pthread_mutex_unlock(&dc->output_lock);
+  pthread_rwlock_unlock(&dc->types_lock);
+  for (size_t i = dc->num_servers; i-- > 0;)
+    pthread_mutex_unlock(&dc->servers[i].lock);
+  pthread_mutex_unlock(&dc->reservations_lock);
+
   return 0;
 }
 
 void datacenter_wait(unsigned int delay_ms){
   struct timespec delay = (struct timespec){delay_ms / 1000, (delay_ms % 1000) * 1000000};
   nanosleep(&delay, NULL);
+}
+
+void datacenter_print(DataCenter *dc, const char *message) {
+  pthread_mutex_lock(&dc->output_lock);
+  printf("%s\n", message);
+  pthread_mutex_unlock(&dc->output_lock);
 }

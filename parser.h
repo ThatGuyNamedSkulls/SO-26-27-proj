@@ -14,84 +14,84 @@ typedef enum {
   CMD_HELP,
   CMD_EMPTY,
   CMD_INVALID,
-  EOC // End of commands
+  EOC // Fim dos comandos
 } Command;
 
 /**
- * Parses the given null-terminated string as an unsigned decimal integer.
- * The conversion succeeds only if the entire string is consumed and no
- * overflow or conversion error occurs.
+ * Converte a string (terminada em '\0') num inteiro decimal sem sinal.
+ * A conversão só tem sucesso se a string for toda consumida e não houver
+ * overflow nem erro de conversão.
  *
- * @param str Null-terminated string to convert.
- * @param out Pointer where the converted value will be stored.
+ * @param str String a converter.
+ * @param out Ponteiro onde é guardado o valor convertido.
  *
- * @return 0 if the conversion succeeds.
- * @return 1 otherwise.
+ * @return 0 se a conversão tiver sucesso.
+ * @return 1 caso contrário.
  */
 int parse_size_t_arg(const char *str, size_t *out);
 
 /**
- * Parses the given null-terminated string as a floating-point number.
- * The conversion succeeds only if the entire string is consumed and no
- * overflow or conversion error occurs.
+ * Converte a string (terminada em '\0') num número de vírgula flutuante.
+ * A conversão só tem sucesso se a string for toda consumida e não houver
+ * overflow nem erro de conversão.
  *
- * @param str Null-terminated string to convert.
- * @param out Pointer where the converted value will be stored.
+ * @param str String a converter.
+ * @param out Ponteiro onde é guardado o valor convertido.
  *
- * @return 0 if the conversion succeeds.
- * @return 1 otherwise.
+ * @return 0 se a conversão tiver sucesso.
+ * @return 1 caso contrário.
  */
 int parse_double_arg(const char *str, double *out);
 
 /**
- * Reads a line and returns the corresponding command.
+ * Lê uma linha e devolve o comando correspondente.
  *
- * @param fd File descriptor to read from.
- * @return Command that was read.
+ * @param fd Descritor de ficheiro de onde se lê.
+ * @return Comando lido.
  */
 Command get_next_command(int fd);
 
 /**
- * Parses a define command.
+ * Lê os argumentos de um comando D (definir).
  *
- * @param fd File descriptor to read from.
- * @param vm Pointer where the VM type is stored.
+ * @param fd Descritor de ficheiro de onde se lê.
+ * @param vm Ponteiro onde é guardado o tipo de VM.
  *
- * @return 0 on success
- * @return 1 on error.
+ * @return 0 em caso de sucesso.
+ * @return 1 em caso de erro.
  */
 int parse_define(int fd, VMType *vm);
 
 /**
- * Parses a reserve command.
+ * Lê os argumentos de um comando R (reservar).
  *
- * @param fd File descriptor to read from.
- * @param reservation Pointer where reservation data is stored.
- * @param max_pairs Max number of <VM_TYPE> <COUNT> that is going to be read.
+ * @param fd Descritor de ficheiro de onde se lê.
+ * @param reservation Ponteiro onde são guardados os dados da reserva.
+ * @param max_pairs Número máximo de pares <TIPO_VM> <QTD> <SERVIDOR> a ler.
  *
- * @return number of pairs read (0 pairs is returned for any error).
+ * @return número de pares lidos (devolve 0 em caso de erro).
  */
 size_t parse_reserve(int fd, Reservation *reservation, size_t max_pairs);
 
 /**
- * Parses an execute command.
+ * Lê os argumentos de um comando A (arrancar).
  *
- * @param fd File descriptor to read from.
- * @param id String where reservation id being executed is stored.
+ * @param fd Descritor de ficheiro de onde se lê.
+ * @param id String onde é guardado o id da reserva a executar.
  *
- * @return 0 on success.
- * @return 1 on error.
+ * @return 0 em caso de sucesso.
+ * @return 1 em caso de erro.
  */
 int parse_execute(int fd, char *id);
 
 /**
- * Parses a wait command.
+ * Lê os argumentos de um comando E (esperar).
  *
- * @param fd File descriptor to read from.
- * @param delay Delay that will be applied.
+ * @param fd Descritor de ficheiro de onde se lê.
+ * @param delay Tempo de espera que vai ser aplicado.
  *
- * @return 0 on success.
- * @return 1 on error.
+ * @return 0 em caso de sucesso.
+ * @return 1 em caso de erro.
  */
 int parse_wait(int fd, unsigned int *delay);
 

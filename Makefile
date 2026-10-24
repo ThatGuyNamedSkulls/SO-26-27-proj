@@ -3,22 +3,22 @@ CC = gcc
 CFLAGS = -g -std=c17 -D_POSIX_C_SOURCE=200809L \
 		 -Wall -Werror -Wextra \
 		 -Wcast-align -Wconversion -Wfloat-equal -Wformat=2 -Wnull-dereference -Wshadow -Wsign-conversion -Wswitch-enum -Wundef -Wunreachable-code -Wunused \
- 		 -fsanitize=undefined
+ 		 -fsanitize=undefined -pthread
 
-ifneq ($(shell uname -s),Darwin) # if not MacOS
+ifneq ($(shell uname -s),Darwin) # se não for macOS
 	CFLAGS += -fmax-errors=5
 endif
 
+HEADERS = $(wildcard *.h)
+OBJECTS = parser.o datacenter.o datacenter_utils.o resources.o filesystem.o
+
 all: cloudIST
 
-cloudIST: main.c constants.h parser.o datacenter.o datacenter_utils.o resources.o filesystem.o
-	$(CC) $(CFLAGS) $(SLEEP) -o cloudIST main.c parser.o datacenter.o datacenter_utils.o resources.o filesystem.o -lm
+cloudIST: main.c $(HEADERS) $(OBJECTS)
+	$(CC) $(CFLAGS) -o cloudIST main.c $(OBJECTS) -lm
 
-%.o: %.c %.h
+%.o: %.c $(HEADERS)
 	$(CC) $(CFLAGS) -c ${@:.o=.c}
-
-run: cloudIST
-	@./cloudIST
 
 clean:
 	rm -f *.o cloudIST

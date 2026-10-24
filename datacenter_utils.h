@@ -4,117 +4,142 @@
 #include "datacenter.h"
 
 /**
- * Checks if a VMType with the given id exists.
- * 
- * @param dc Pointer to Data Center.
- * @param type_id Id of VM type being checked.
- * 
- * @return Pointer to VMType if it exists.
- * @return NULL if VMType does not exist.
+ * Verifica se existe um tipo de VM com o id dado.
+ * Quem chama tem de ter o types_lock (para leitura ou escrita).
+ *
+ * @param dc Ponteiro para o centro de dados.
+ * @param type_id Id do tipo de VM a procurar.
+ *
+ * @return Ponteiro para o VMType, se existir.
+ * @return NULL se o tipo não existir.
  */
 VMType *VMType_exists(DataCenter *dc, const char* type_id);
 
 /**
- * Simulates the placement of every VM requested in the reservation using a
- * temporary copy of each server's available resources. The Data Center state
- * is left unchanged regardless of the outcome.
+ * Procura uma reserva pelo id (em qualquer estado).
+ * Quem chama tem de ter o reservations_lock.
  *
- * Validation fails if any requested server does not have enough available
- * resources to host all the requested VMs assigned to it or if the request 
- * does not have valid parameters (VM types that do not exist, invalid server ids).
+ * @param dc Ponteiro para o centro de dados.
+ * @param reservation_id Id da reserva a procurar.
  *
- * @param dc Data Center where the reservation will be validated.
- * @param reservation Reservation to validate.
- *
- * @return 0 if the reservation can be fully allocated.
- * @return 1 otherwise.
+ * @return Ponteiro para a reserva, ou NULL se não existir.
  */
-int reservation_validate(DataCenter *dc, Reservation *reservation);
+Reservation *find_reservation(DataCenter *dc, const char *reservation_id);
 
 /**
- * Creates all VMs requested by the reservation, assigns them to their
- * designated servers, updates the server resource availability, and stores
- * references to the created VMs in both the reservation and the corresponding
- * server hosted VM list.
+ * Verifica os parâmetros de cada item da reserva (quantidade, id do
+ * servidor e tipo de VM) e guarda em cada item o seu VMType. Fecha o
+ * types_lock para leitura.
  *
- * The reservation is expected to have already passed validation before this
- * function is called. If an error occurs during the commit process, the
- * function performs a rollback of the changes made by this operation.
+ * @param dc Centro de dados onde a reserva vai ser feita.
+ * @param reservation Reserva a verificar.
  *
- * @param dc Data Center where the reservation will be committed.
- * @param reservation Reservation to allocate.
- *
- * @return 0 if the reservation was successfully committed
- * @return 1 if an error occurred and the changes were rolled back.
+ * @return 0 se todos os itens forem válidos.
+ * @return 1 caso contrário (o erro é impresso).
  */
-int reservation_commit(DataCenter *dc, Reservation *reservation);
+int reservation_check_items(DataCenter *dc, Reservation *reservation);
 
 /**
- * Looks up a reservation by id and checks that it is pending.
+ * Acrescenta uma reserva no estado RES_STATE_CREATING à tabela de reservas,
+ * para que nenhuma outra tarefa possa usar o mesmo id. Fecha o
+ * reservations_lock.
  *
- * @param dc Pointer to a Data Center.
- * @param reservation_id ID of the reservation to look up.
+ * @param dc Ponteiro para o centro de dados.
+ * @param reservation Reserva (alocada com malloc).
  *
- * @return Pointer to the Reservation if found and RES_STATE_PENDING.
- * @return NULL if not found or not in RES_STATE_PENDING (error is printed).
+ * @return 0 em caso de sucesso.
+ * @return 1 se o id já existir ou a tabela estiver cheia.
  */
-Reservation *find_pending_reservation(DataCenter *dc, const char *reservation_id);
+int reservation_register(DataCenter *dc, Reservation *reservation);
 
 /**
- * Frees every VM allocated to the reservation, returns their resources to the
- * corresponding hosting servers, removes them from each server's hosted VM
- * list, and finally removes the reservation from the Data Center reservation
- * list.
+ * Retira uma reserva da tabela de reservas e liberta-a.
+ * Quem chama tem de ter o reservations_lock.
  *
- * @param dc Pointer to the Data Center containing the reservation.
- * @param reservation Pointer to the reservation to destroy.
+ * @param dc Ponteiro para o centro de dados.
+ * @param reservation Reserva a retirar.
  */
-void reservation_destroy(DataCenter *dc, Reservation *reservation);
+void reservation_remove(DataCenter *dc, Reservation *reservation);
 
 /**
- * Runs in the child process after fork(): sets resource limits (RAM,
- * disk) and execs the VM's workload under cpulimit. Never returns
- * (either execs successfully or calls exit(1) on failure).
+ * Fecha os trincos dos servidores usados pela reserva (por id crescente),
+ * verifica que todas as VMs pedidas cabem e, só se couberem, cria-as e
+ * desconta os seus recursos. Tudo ou nada.
  *
- * @param vm Pointer to the VM being spawned.
+ * @param dc Centro de dados onde a reserva é feita.
+ * @param reservation Reserva a alocar.
+ *
+ * @return 0 se todas as VMs foram alocadas.
+ * @return 1 caso contrário (nada é alterado).
  */
-void spawn_vm_child(VM *vm);
+int reservation_allocate(DataCenter *dc, Reservation *reservation);
 
 /**
- * Forks one child per VM in the reservation, calling spawn_vm_child()
- * in each child and recording the pid/state in the parent.
+ * Cria a pasta de cada VM da reserva (CLOUDIST_ROOT/<id_reserva>/<id_vm>),
+ * guarda o seu caminho na VM e copia recursivamente para lá a diretoria de
+ * inputs do tipo da VM.
  *
- * @param res Pointer to the Reservation whose VMs should be spawned.
+ * @param res Ponteiro para a reserva cujas pastas são preparadas.
  *
- * @return 0 on success.
- * @return 1 if any fork() call fails.
+ * @return 0 em caso de sucesso.
+ * @return 1 em caso de erro.
  */
-int spawn_all_vms(Reservation *res);
+int prepare_vm_dirs(Reservation *res);
 
 /**
- * Blocks until every VM's process has exited, updating each VM's state
- * to VM_STATE_TERMINATED as its pid is reaped.
+ * Faz um fork por cada VM da reserva. Cada filho limita os seus recursos e
+ * faz exec da aplicação da VM através do cpulimit.
+ * Quem chama tem de ter o reservations_lock.
  *
- * @param res Pointer to the Reservation whose VMs should be waited on.
+ * @param dc Ponteiro para o centro de dados.
+ * @param res Ponteiro para a reserva cujas VMs vão ser lançadas.
+ *
+ * @return 0 em caso de sucesso.
+ * @return 1 se algum fork() falhar (as VMs que não arrancaram são destruídas).
  */
-void wait_for_all_vms(Reservation *res);
+int spawn_all_vms(DataCenter *dc, Reservation *res);
 
 /**
- * Converts a VM state to a human-readable string. Used by datacenter_list().
+ * Destrói uma VM: devolve os recursos ao servidor, retira-a do servidor e
+ * da reserva, e liberta-a. Se a reserva ficar sem VMs, também é retirada.
+ * Quem chama tem de ter o reservations_lock.
  *
- * @param state The VMState to convert.
+ * @param dc Ponteiro para o centro de dados.
+ * @param res Reserva da VM.
+ * @param vm VM a destruir.
  *
- * @return Static, human-readable string describing the state.
+ * @return 1 se a reserva também foi retirada, 0 caso contrário.
+ */
+int vm_destroy(DataCenter *dc, Reservation *res, VM *vm);
+
+/**
+ * Tarefa reaper: espera (wait()) pelos processos das VMs e destrói cada VM
+ * assim que o seu processo termina. Dorme na variável de condição
+ * vms_changed enquanto não há VMs a correr.
+ *
+ * @param arg Ponteiro para o centro de dados.
+ *
+ * @return NULL.
+ */
+void *reaper_thread(void *arg);
+
+/**
+ * Converte o estado de uma VM numa string legível. Usada pelo
+ * datacenter_list().
+ *
+ * @param state O VMState a converter.
+ *
+ * @return String estática que descreve o estado.
  */
 const char *vm_state_to_string(VMState state);
 
 /**
- * Converts a reservation state to a human-readable string. Used by
+ * Converte o estado de uma reserva numa string legível. Usada pelo
  * datacenter_list().
  *
- * @param state The ReservationState to convert.
+ * @param state O ReservationState a converter.
  *
- * @return Static, human-readable string describing the state.
+ * @return String estática que descreve o estado.
  */
 const char *res_state_to_string(ReservationState state);
 

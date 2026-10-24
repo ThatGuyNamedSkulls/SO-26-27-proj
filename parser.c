@@ -1,9 +1,6 @@
 #include "parser.h"
 
-#include <ctype.h>
-#include <math.h>
 #include <errno.h>
-#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -14,13 +11,13 @@
 #include "datacenter.h"
 
 /**
- * Skip spaces until finding a non-space character.
+ * Salta espaços até encontrar um carácter que não seja espaço.
  *
- * @param fd File descriptor to read from.
- * @param first Pointer where the firsy non-space character is stored.
+ * @param fd Descritor de ficheiro de onde se lê.
+ * @param first Ponteiro onde é guardado o primeiro carácter que não é espaço.
  *
- * @return 0 on success.
- * @return -1 on failure.
+ * @return 0 em caso de sucesso.
+ * @return -1 em caso de falha.
  */
 static int skip_spaces(int fd, char *first){
   ssize_t bytes_read = 0;
@@ -41,17 +38,17 @@ static int skip_spaces(int fd, char *first){
 }
 
 /**
- * Reads a string from a file descriptor.
+ * Lê uma string de um descritor de ficheiro.
  *
- * Stops when a space or newline is found.
+ * Pára quando encontra um espaço ou uma mudança de linha.
  *
- * @param fd File descriptor to read from.
- * @param buffer Buffer to read into.´
- * @param max Max bytes to read.
- * @param delimiter Pointer where the terminating character is stored.
+ * @param fd Descritor de ficheiro de onde se lê.
+ * @param buffer Buffer onde se guarda a string.
+ * @param max Número máximo de bytes a ler.
+ * @param delimiter Ponteiro onde é guardado o carácter que terminou a string.
  *
- * @return 0 on success.
- * @return -1 on error or EOF.
+ * @return 0 em caso de sucesso.
+ * @return -1 em caso de erro ou fim de ficheiro.
  */
 static int read_string(int fd, char *buffer, size_t max, char *delimiter){
   char ch;
@@ -85,18 +82,18 @@ static int read_string(int fd, char *buffer, size_t max, char *delimiter){
 }
 
 /**
- * Reads a size_t value from a file descriptor.
+ * Lê um valor size_t de um descritor de ficheiro.
  *
- * Reads characters until a non-digit or EOF is found and converts them to a
- * size_t.
+ * Lê caracteres até encontrar um que não seja dígito (ou o fim do ficheiro)
+ * e converte-os para size_t.
  *
- * @param fd File descriptor to read from.
- * @param value Pointer where the value is stored.
- * @param delimiter Pointer where the terminating character is stored.
+ * @param fd Descritor de ficheiro de onde se lê.
+ * @param value Ponteiro onde é guardado o valor.
+ * @param delimiter Ponteiro onde é guardado o carácter que terminou o número.
  *
- * @return 0 on success.
- * @return 1 if the value exceeds SIZE_MAX.
- * @return -1 on error.
+ * @return 0 em caso de sucesso.
+ * @return 1 se o valor for maior que SIZE_MAX.
+ * @return -1 em caso de erro.
  */
 static int read_size_t(int fd, size_t *value, char *delimiter) {
   char buf[32];
@@ -145,17 +142,17 @@ static int read_size_t(int fd, size_t *value, char *delimiter) {
 }
 
 /**
- * Reads a floating-point value from a file descriptor.
+ * Lê um valor de vírgula flutuante de um descritor de ficheiro.
  *
- * Skips leading spaces, reads the next token until a space, newline or EOF,
- * and converts it to a double.
+ * Salta os espaços iniciais, lê o próximo token até um espaço, mudança de
+ * linha ou fim de ficheiro, e converte-o para double.
  *
- * @param fd File descriptor to read from.
- * @param value Pointer where the parsed value will be stored.
- * @param delimiter Pointer where the terminating character is stored.
+ * @param fd Descritor de ficheiro de onde se lê.
+ * @param value Ponteiro onde é guardado o valor lido.
+ * @param delimiter Ponteiro onde é guardado o carácter que terminou o número.
  *
- * @return 0 on success.
- * @return -1 if no valid floating-point value could be read.
+ * @return 0 em caso de sucesso.
+ * @return -1 se não foi possível ler um valor válido.
  */
 static int read_double(int fd, double *value, char *delimiter){
   char buffer[64];
@@ -175,16 +172,16 @@ static int read_double(int fd, double *value, char *delimiter){
 }
 
 /**
- * Parses a resource specification.
+ * Lê a especificação de recursos.
  *
- * Reads three size_t values representing RAM, disk and cores.
+ * Lê três valores: RAM, disco e cores.
  *
- * @param fd File descriptor to read from.
- * @param resources Pointer where the resources are stored.
- * @param delimiter Pointer where the terminating character is stored.
+ * @param fd Descritor de ficheiro de onde se lê.
+ * @param resources Ponteiro onde são guardados os recursos.
+ * @param delimiter Ponteiro onde é guardado o último carácter lido.
  *
- * @return 0 on success.
- * @return -1 on error.
+ * @return 0 em caso de sucesso.
+ * @return -1 em caso de erro.
  */
 static int parse_resources(int fd, Resources *resources, char *delimiter) {
   if (read_size_t(fd, &resources->ram, delimiter) != 0 || *delimiter != ' ') {
@@ -203,17 +200,17 @@ static int parse_resources(int fd, Resources *resources, char *delimiter) {
 }
 
 /**
- * Discards the remaining characters of the current line.
+ * Descarta o resto da linha atual.
  *
- * Reads and ignores characters until a newline is found.
+ * Lê e ignora caracteres até encontrar uma mudança de linha.
  *
- * @param fd File descriptor to read from.
- * @param last_char Last character read from fd.
+ * @param fd Descritor de ficheiro de onde se lê.
+ * @param last_char Último carácter lido do fd.
  */
 static void cleanup(int fd, char last_char) {
   char ch;
 
-  // Parser consumes delimiters so we do this safe check.
+  // O parser consome os delimitadores, por isso fazemos esta verificação.
   if(last_char == '\n' || last_char == '\0'){
     return;
   }
@@ -223,12 +220,12 @@ static void cleanup(int fd, char last_char) {
 }
 
 /**
- * Converts a character into a command.
+ * Converte um carácter num comando.
  *
- * @param ch Character representing a command.
+ * @param ch Carácter que representa um comando.
  *
- * @return The corresponding command.
- * @return CMD_INVALID if the character is not a command.
+ * @return O comando correspondente.
+ * @return CMD_INVALID se o carácter não for um comando.
  */
 static Command char_to_command(char ch){
   switch (ch) {
@@ -254,13 +251,13 @@ static int command_has_arguments(Command command){
 }
 
 /**
- * Checks if the delimiter after a command is valid.
+ * Verifica se o carácter a seguir ao comando é válido.
  *
- * @param command Command being checked.
- * @param delimiter Character after the command.
+ * @param command Comando a verificar.
+ * @param delimiter Carácter a seguir ao comando.
  *
- * @return 0 if valid.
- * @return -1 otherwise.
+ * @return 0 se for válido.
+ * @return -1 caso contrário.
  */
 static int validate_command_delimiter(Command command, char delimiter){
   if (command_has_arguments(command)) {
@@ -343,25 +340,25 @@ int parse_define(int fd, VMType *vm){
   char delimiter;
   VMType tmp;
 
-  // Parse VM id.
+  // Lê o id do tipo de VM.
   if(read_string(fd, tmp.id, MAX_STRING_SIZE, &delimiter) != 0 || delimiter != ' '){
     cleanup(fd, delimiter);
     return 1;
   }
 
-  // Parse input folder.
+  // Lê a diretoria de inputs.
   if(read_string(fd, tmp.input_folder, MAX_PATH_SIZE, &delimiter) != 0 || delimiter != ' '){
     cleanup(fd, delimiter);
     return 1;
   }
 
-  // Parse executable file.
+  // Lê o caminho do executável.
   if(read_string(fd, tmp.exec_path, MAX_PATH_SIZE, &delimiter) != 0 || delimiter != ' '){
     cleanup(fd, delimiter);
     return 1;
   }
 
-  // Parse VM resourcws.
+  // Lê os recursos da VM.
   if(parse_resources(fd, &tmp.required, &delimiter) != 0 || (delimiter != '\n' && delimiter != '\0')) {
     cleanup(fd, delimiter);
     return 1;
@@ -375,13 +372,13 @@ size_t parse_reserve(int fd, Reservation *reservation, size_t max_pairs){
   char delimiter;
   Reservation tmp = {0};
 
-  // Parse reservation id
+  // Lê o id da reserva.
   if(read_string(fd, tmp.id, MAX_STRING_SIZE, &delimiter) != 0 || delimiter != ' '){
     cleanup(fd, delimiter);
     return 0;
   }
 
-  // Parse VM type and Number of VMs being reserved pairs.
+  // Lê os grupos <TIPO_VM> <QTD> <SERVIDOR>.
   tmp.items_count = 0;
   while(tmp.items_count < max_pairs){
     if(read_string(fd, tmp.items[tmp.items_count].vm_type_id, MAX_STRING_SIZE, &delimiter) != 0 || delimiter != ' '){
@@ -401,7 +398,7 @@ size_t parse_reserve(int fd, Reservation *reservation, size_t max_pairs){
 
     tmp.items_count++;
 
-    // Check if pairs ended.
+    // Verifica se os grupos acabaram.
     if(delimiter == '\n' || delimiter == '\0'){
       break;
     }
