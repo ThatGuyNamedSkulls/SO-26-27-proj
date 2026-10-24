@@ -1,8 +1,10 @@
 #define MAX_STRING_SIZE 40
 #define MAX_PATH_SIZE 1024
 
-#define CLOUDIST_ROOT "/tmp/CloudIST"   // Pasta onde ficam as pastas das VMs
-#define CPULIMIT_NAME "cpulimit"        // Nome do programa que limita o CPU das VMs (argv[0] do exec)
+// Pasta onde ficam as pastas das VMs. Inclui o número de aluno porque o /tmp
+// é partilhado por todos os utilizadores do cluster (indicação do professor).
+#define CLOUDIST_ROOT "/tmp/CloudIST-1117611"
+#define CPULIMIT_NAME "cpulimit"        // Programa que limita o CPU das VMs (o execvp procura-o no PATH)
 
 #define MAX_VM_TYPES           128
 #define MAX_VM_ID_STRING       MAX_STRING_SIZE + 4 // 4 = "_" + 3 dígitos

@@ -40,7 +40,7 @@ typedef struct VM {
   Server *server; // Servidor onde a VM está.
   pid_t pid;      // PID do processo da VM.
   VMState state;  // Estado da VM.
-  char dir[MAX_PATH_SIZE]; // Pasta da VM. ex: "/tmp/CloudIST/R1/R1_1"
+  char dir[MAX_PATH_SIZE]; // Pasta da VM. ex: "/tmp/CloudIST-1117611/R1/R1_1"
 } VM;
 
 typedef struct Server {
@@ -83,7 +83,6 @@ typedef struct DataCenter {
 	Server *servers;			     // Lista de servidores.
 	size_t num_servers;              // Número de servidores.
 	double host_cores;               // Cores reais usados para simular todo o centro de dados.
-	char cpulimit_path[MAX_PATH_SIZE]; // Caminho do cpulimit ("" se não foi encontrado).
 
 	VMType vm_types[MAX_VM_TYPES];
     size_t num_vm_types;
@@ -118,7 +117,7 @@ void datacenter_init(DataCenter *dc);
 void datacenter_destroy(DataCenter *dc);
 
 /**
- * Configura um centro de dados, procura o cpulimit e arranca a tarefa reaper.
+ * Configura um centro de dados e arranca a tarefa reaper.
  *
  * @param dc Ponteiro para o centro de dados a configurar.
  * @param num_servers Número de servidores.

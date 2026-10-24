@@ -52,7 +52,7 @@ ok=0
 grep -q 'Max address space *2147483648 *2147483648' "$work/limits.out" 2>/dev/null || ok=1
 grep -q 'Max file size *3221225472 *3221225472' "$work/limits.out" 2>/dev/null || ok=1
 grep -q -- '-l 100 --' "$work/limits.out" 2>/dev/null || ok=1
-grep -q '^cwd=/tmp/CloudIST/RLIM/RLIM_1$' "$work/limits.out" 2>/dev/null || ok=1
+grep -q '^cwd=/tmp/CloudIST-1117611/RLIM/RLIM_1$' "$work/limits.out" 2>/dev/null || ok=1
 grep -q '^payload=optional fixture$' "$work/limits.out" 2>/dev/null || ok=1
 result "limits_and_cwd" "$ok" "limites de RAM/disco, percentagem do cpulimit, pasta ou input copiado diferentes do esperado"
 

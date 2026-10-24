@@ -9,9 +9,9 @@ Alterações ao código base:
   reservation_remove - tira-a da tabela e liberta-a
 
 2. execução (A):
-  prepare_vm_dirs - cria /tmp/CloudIST/<res>/<vm> e copia para lá a diretoria de inputs (copy_dir)
+  prepare_vm_dirs - cria /tmp/CloudIST-<nº aluno>/<res>/<vm> e copia para lá a diretoria de inputs (copy_dir)
   spawn_all_vms - um fork por VM, o filho faz chdir para a sua pasta, setrlimit (RAM e disco) e
-  execv do cpulimit -q -f -l <limite> -- <exec> (caminho do cpulimit encontrado no arranque), o pai guarda o pid e marca-a RUNNING
+  execvp do cpulimit -q -f -l <limite> -- <exec> (procura o cpulimit no PATH), o pai guarda o pid e marca-a RUNNING
   vm_cpu_limit - vCPU / (CPU por servidor x servidores) x cores do host x 100
 
 3. fim das VMs:
@@ -344,9 +344,8 @@ static void child_fail(const char *message) {
  *
  * @param vm Ponteiro para a VM a lançar.
  * @param cpu_limit Percentagem do cpulimit, em string.
- * @param cpulimit_path Caminho absoluto do cpulimit.
  */
-static void spawn_vm_child(VM *vm, char *cpu_limit, const char *cpulimit_path) {
+static void spawn_vm_child(VM *vm, char *cpu_limit) {
 	// A aplicação usa caminhos relativos para os seus inputs.
 	if (chdir(vm->dir) != 0)
 		child_fail("Failed to enter the VM folder.\n");
@@ -368,7 +367,8 @@ static void spawn_vm_child(VM *vm, char *cpu_limit, const char *cpulimit_path) {
 	// Por convenção o argv[0] é o nome do programa.
 	char *args[] = {CPULIMIT_NAME, "-q", "-f", "-l", cpu_limit, "--", vm->type->exec_path, NULL};
 
-	execv(cpulimit_path, args);
+	// O execvp procura o cpulimit no PATH, como o terminal faz (pode estar em /usr/bin ou em ~/bin).
+	execvp(CPULIMIT_NAME, args);
 
 	// O exec só retorna em caso de erro.
 	child_fail("Failed to exec cpulimit.\n");
@@ -392,7 +392,7 @@ int spawn_all_vms(DataCenter *dc, Reservation *res) {
 		}
 
 		if (pid == 0)
-			spawn_vm_child(vm, cpu_limit, dc->cpulimit_path); // Filho: nunca retorna.
+			spawn_vm_child(vm, cpu_limit); // Filho: nunca retorna.
 
 		vm->pid = pid;
 		vm->state = VM_STATE_RUNNING;

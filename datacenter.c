@@ -15,8 +15,7 @@ Alterações ao código base:
 4. A: marca-a RUNNING (para só um A a arrancar), copia os inputs sem ter trincos,
   depois faz fork das VMs e retorna logo (o ciclo de comandos não fica bloqueado)
 
-5. o configure procura o cpulimit (stat em /usr/bin, /usr/local/bin, /bin) e arranca a tarefa reaper,
-  o destroy espera que todas as VMs terminem e depois pára-a
+5. o configure arranca a tarefa reaper, o destroy espera que todas as VMs terminem e depois pára-a
 
 6. L: tem os trincos enquanto imprime para mostrar um estado coerente, salta as reservas CREATING
 */
@@ -29,30 +28,10 @@ Alterações ao código base:
 #include <stdlib.h>
 #include <string.h>
 
-/**
- * Procura o cpulimit com stat (file_exists).
- *
- * @param path Buffer onde e guardado o caminho (fica "" se nao for encontrado).
- * @param size Tamanho do buffer, em bytes.
- */
-static void find_cpulimit(char *path, size_t size) {
-  const char *candidates[] = {"/usr/bin/cpulimit", "/usr/local/bin/cpulimit", "/bin/cpulimit"};
-
-  path[0] = '\0';
-
-  for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
-    if (file_exists(candidates[i])) {
-      snprintf(path, size, "%s", candidates[i]);
-      return;
-    }
-  }
-}
-
 void datacenter_init(DataCenter *dc) {
   dc->servers = NULL;
   dc->num_servers = 0;
   dc->host_cores = 1.0;
-  dc->cpulimit_path[0] = '\0';
 
   dc->num_vm_types = 0;
 
@@ -140,9 +119,6 @@ int datacenter_configure(DataCenter *dc, size_t num_servers, Resources *resource
 
   dc->num_servers = num_servers;
   dc->host_cores = host_cores;
-
-  // So e preciso no comando A, por isso nan encontrar o cpulimit, nao e erro aqui.
-  find_cpulimit(dc->cpulimit_path, sizeof(dc->cpulimit_path));
 
   // Tarefa que espera pelos processos das VMs e as destroi quando terminam.
   if (pthread_create(&dc->reaper, NULL, reaper_thread, dc) != 0) {
@@ -249,11 +225,6 @@ int datacenter_reserve(DataCenter *dc, Reservation *reservation) {
 int datacenter_execute(DataCenter *dc, const char *reservation_id) {
   if(!dc->configured){
     fprintf(stderr, "Data Center needs to be configured!\n");
-    return 1;
-  }
-
-  if (dc->cpulimit_path[0] == '\0') {
-    fprintf(stderr, "Failed to find cpulimit.\n");
     return 1;
   }
 

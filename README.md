@@ -15,8 +15,8 @@ make
 - `INPUT_DIR`: diretoria cujos ficheiros `.conf` são processados (por ordem alfabética).
 - `MAX_THREADS`: número máximo de worker threads a processar ficheiros `.conf`.
 
-É preciso ter o `cpulimit` instalado (`sudo apt install cpulimit`), em
-`/usr/bin`, `/usr/local/bin` ou `/bin`.
+É preciso ter o `cpulimit` instalado (`sudo apt install cpulimit`) e
+acessível pelo `PATH`.
 
 ## Estrutura do projeto
 
